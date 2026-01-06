@@ -1067,15 +1067,16 @@
       const groupSize = parseInt(quantInputs.groupSize.value);
       const preset = quantPresets[method];
 
+      // Use decimal GB (1e9) for consistency with main calculation
       const weightBytes = baseParams * (bits / 8);
-      const weightGB = weightBytes / (1024 ** 3);
+      const weightGB = weightBytes / 1e9;
 
       let scaleGB = 0;
       if (preset?.hasScales && groupSize > 0) {
         const numGroups = baseParams / groupSize;
         const scaleBytes = numGroups * 2;
         const zeroBytes = method.includes('awq') || method.includes('gptq') ? numGroups * 2 : 0;
-        scaleGB = (scaleBytes + zeroBytes) / (1024 ** 3);
+        scaleGB = (scaleBytes + zeroBytes) / 1e9;
       } else if (preset?.scaleOverhead) {
         scaleGB = weightGB * preset.scaleOverhead;
       }
@@ -1134,7 +1135,7 @@
       // Try to get size from safetensors info
       // Convert to decimal GB (1 GB = 1,000,000,000 bytes) for consistency
       if (modelInfo.safetensors?.total) {
-        return modelInfo.safetensors.total / (1000 * 1000 * 1000); // bytes to GB (decimal)
+        return modelInfo.safetensors.total / 1e9; // bytes to GB (decimal)
       }
 
       // Try to estimate from parameters
@@ -1147,7 +1148,7 @@
           t.includes('mxfp4')
         );
         const bytesPerParam = hasQuantization ? 0.5 : 2; // 4-bit vs fp16
-        return (params * bytesPerParam) / (1000 * 1000 * 1000); // bytes to GB (decimal)
+        return (params * bytesPerParam) / 1e9; // bytes to GB (decimal)
       }
 
       // Fallback: try to parse from model card or name
@@ -1445,6 +1446,17 @@
       }
     });
 
+    // Reset dropdown to "Custom" when VRAM is manually edited
+    inputs.gpuVram.addEventListener('input', () => {
+      const currentValue = parseFloat(inputs.gpuVram.value);
+      const presetValue = parseFloat(gpuPreset.value);
+
+      // If the value doesn't match the current preset, switch to "custom"
+      if (gpuPreset.value !== 'custom' && currentValue !== presetValue) {
+        gpuPreset.value = 'custom';
+      }
+    });
+
     // Add input listeners
     Object.values(inputs).forEach(input => {
       input.addEventListener('input', calculate);
@@ -1583,7 +1595,7 @@
       // Update status
       const statusContainer = document.getElementById('status-container');
       let statusClass, statusText;
-      
+
       if (totalUsage > availableVram) {
         statusClass = 'error';
         statusText = '⚠ OOM Risk: Reduce context, seqs, or enable FP8 KV cache';
@@ -1595,7 +1607,16 @@
         statusText = '✓ Configuration looks good';
       }
 
-      statusContainer.innerHTML = `<div class="status-badge ${statusClass}">${statusText}</div>`;
+      // Calculate GiB values for vLLM comparison (1 GB decimal = 0.931323 GiB binary)
+      const availableVramGiB = availableVram * 0.931323;
+      const kvAvailableGiB = kvAvailable * 0.931323;
+
+      statusContainer.innerHTML = `
+        <div class="status-badge ${statusClass}">${statusText}</div>
+        <p class="hint" style="margin-top: 1rem; text-align: center;">
+          💡 vLLM comparison: Available ${availableVramGiB.toFixed(2)} GiB (binary) • KV cache ${kvAvailableGiB.toFixed(2)} GiB
+        </p>
+      `;
 
       // Generate command
       const commandOutput = document.getElementById('command-output');
