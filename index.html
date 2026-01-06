@@ -717,19 +717,32 @@
           </div>
           
           <div class="form-group">
-            <label>GPU Preset</label>
-            <div class="presets" id="gpu-presets">
-              <button class="preset-btn" data-vram="24" data-name="RTX 4090">RTX 4090 (24GB)</button>
-              <button class="preset-btn active" data-vram="32" data-name="RTX 5090">RTX 5090 (32GB)</button>
-              <button class="preset-btn" data-vram="48" data-name="A6000">A6000 (48GB)</button>
-              <button class="preset-btn" data-vram="80" data-name="H100">H100 (80GB)</button>
-            </div>
+            <label for="gpu-preset">GPU Preset</label>
+            <select id="gpu-preset">
+              <option value="custom">Custom (enter manually)</option>
+              <optgroup label="Consumer GPUs">
+                <option value="12.9">RTX 4070 Ti (12GB)</option>
+                <option value="17.2">RTX 4080 (16GB)</option>
+                <option value="25.8">RTX 4090 (24GB)</option>
+                <option value="25.4">RTX 3090 (24GB)</option>
+                <option value="34.2" selected>RTX 5090 (32GB)</option>
+              </optgroup>
+              <optgroup label="Professional GPUs">
+                <option value="51.0">A6000 (48GB)</option>
+                <option value="42.5">A100 (40GB)</option>
+                <option value="85.2">A100 (80GB)</option>
+                <option value="51.0">L40S (48GB)</option>
+                <option value="85.5">H100 (80GB)</option>
+              </optgroup>
+            </select>
+            <p class="hint">Actual usable VRAM from nvidia-smi (decimal GB)</p>
           </div>
 
           <div class="input-row">
             <div class="form-group">
               <label for="gpu-vram">VRAM per GPU (GB)</label>
-              <input type="number" id="gpu-vram" value="32" min="1" max="192" step="1">
+              <input type="number" id="gpu-vram" value="34.2" min="1" max="192" step="0.1">
+              <p class="hint">1 GB = 1,000³ bytes (decimal)</p>
             </div>
             <div class="form-group">
               <label for="num-gpus">Number of GPUs (TP size)</label>
@@ -766,16 +779,6 @@
               </button>
             </div>
             <p class="hint" id="hf-status">Enter a model ID and click Fetch to load config</p>
-          </div>
-
-          <div class="form-group">
-            <label>Model Preset</label>
-            <div class="presets" id="model-presets">
-              <button class="preset-btn active" data-weights="36.3" data-layers="32" data-kvheads="8" data-headdim="64" data-name="HyperNova-60B" data-context="131072" data-quant="mxfp4" data-bits="4" data-baseparams="60">HyperNova-60B</button>
-              <button class="preset-btn" data-weights="36.3" data-layers="32" data-kvheads="8" data-headdim="64" data-name="gpt-oss-120b" data-context="131072" data-quant="mxfp4" data-bits="4" data-baseparams="120">gpt-oss-120b</button>
-              <button class="preset-btn" data-weights="42" data-layers="80" data-kvheads="8" data-headdim="128" data-name="Qwen3-80B-AWQ" data-context="131072" data-quant="awq" data-bits="4" data-baseparams="80">Qwen3-80B-AWQ</button>
-              <button class="preset-btn" data-weights="140" data-layers="80" data-kvheads="8" data-headdim="128" data-name="Llama-70B-FP16" data-context="131072" data-quant="none" data-bits="16" data-baseparams="70">Llama-70B-FP16</button>
-            </div>
           </div>
 
           <div class="input-row">
@@ -1129,21 +1132,22 @@
 
     function estimateModelWeights(modelInfo, config) {
       // Try to get size from safetensors info
+      // Convert to decimal GB (1 GB = 1,000,000,000 bytes) for consistency
       if (modelInfo.safetensors?.total) {
-        return modelInfo.safetensors.total / (1024 * 1024 * 1024); // bytes to GB
+        return modelInfo.safetensors.total / (1000 * 1000 * 1000); // bytes to GB (decimal)
       }
 
       // Try to estimate from parameters
       if (modelInfo.safetensors?.parameters) {
         const params = Object.values(modelInfo.safetensors.parameters).reduce((a, b) => a + b, 0);
         // Estimate based on dtype
-        const hasQuantization = modelInfo.tags?.some(t => 
-          t.includes('awq') || t.includes('gptq') || t.includes('bnb') || 
+        const hasQuantization = modelInfo.tags?.some(t =>
+          t.includes('awq') || t.includes('gptq') || t.includes('bnb') ||
           t.includes('4bit') || t.includes('8bit') || t.includes('fp8') ||
           t.includes('mxfp4')
         );
         const bytesPerParam = hasQuantization ? 0.5 : 2; // 4-bit vs fp16
-        return (params * bytesPerParam) / (1024 * 1024 * 1024);
+        return (params * bytesPerParam) / (1000 * 1000 * 1000); // bytes to GB (decimal)
       }
 
       // Fallback: try to parse from model card or name
@@ -1339,9 +1343,6 @@
         }
       }
 
-      // Clear active preset since we loaded custom
-      document.querySelectorAll('#model-presets .preset-btn').forEach(b => b.classList.remove('active'));
-
       // Update quant estimate
       calculateQuantEstimate();
 
@@ -1434,40 +1435,14 @@
     // Initial quant estimate
     calculateQuantEstimate();
 
-    // Preset buttons
-    document.querySelectorAll('#gpu-presets .preset-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#gpu-presets .preset-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        inputs.gpuVram.value = btn.dataset.vram;
+    // GPU Preset dropdown
+    const gpuPreset = document.getElementById('gpu-preset');
+    gpuPreset.addEventListener('change', () => {
+      const value = gpuPreset.value;
+      if (value !== 'custom') {
+        inputs.gpuVram.value = value;
         calculate();
-      });
-    });
-
-    document.querySelectorAll('#model-presets .preset-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#model-presets .preset-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        inputs.modelWeights.value = btn.dataset.weights;
-        inputs.numLayers.value = btn.dataset.layers;
-        inputs.kvHeads.value = btn.dataset.kvheads;
-        inputs.headDim.value = btn.dataset.headdim;
-        if (btn.dataset.context) {
-          inputs.maxModelLen.value = btn.dataset.context;
-        }
-        // Set quantization fields
-        if (btn.dataset.quant) {
-          quantInputs.method.value = btn.dataset.quant;
-        }
-        if (btn.dataset.bits) {
-          quantInputs.bits.value = btn.dataset.bits;
-        }
-        if (btn.dataset.baseparams) {
-          quantInputs.baseParams.value = btn.dataset.baseparams;
-        }
-        calculateQuantEstimate();
-        calculate();
-      });
+      }
     });
 
     // Add input listeners
@@ -1488,11 +1463,16 @@
     }
 
     function calculate() {
+      // UNITS: All memory values use decimal GB (1 GB = 1,000,000,000 bytes)
+      // This matches GPU manufacturer specs and is consistent throughout calculations.
+      // Note: vLLM reports in GiB (binary), where 1 GiB = 1,073,741,824 bytes.
+      // Conversion: GB (decimal) × 0.931323 ≈ GiB (binary)
+
       // Get values
-      const gpuVram = parseFloat(inputs.gpuVram.value);
+      const gpuVram = parseFloat(inputs.gpuVram.value);  // GB (decimal)
       const numGpus = parseInt(inputs.numGpus.value);
       const gpuUtilization = parseFloat(inputs.gpuUtilization.value);
-      const modelWeights = parseFloat(inputs.modelWeights.value);
+      const modelWeights = parseFloat(inputs.modelWeights.value);  // GB (decimal)
       const numLayers = parseInt(inputs.numLayers.value);
       const kvHeads = parseInt(inputs.kvHeads.value);
       const headDim = parseInt(inputs.headDim.value);
@@ -1501,9 +1481,9 @@
       const maxBatchedTokens = parseInt(inputs.maxBatchedTokens.value);
       const kvCacheDtypeBytes = parseInt(inputs.kvCacheDtype.value);
       const cudaGraphsEnabled = inputs.cudaGraphs.value === '1';
-      const overhead = parseFloat(inputs.overhead.value);
+      const overhead = parseFloat(inputs.overhead.value);  // GB (decimal)
 
-      // Calculate per-GPU values
+      // Calculate per-GPU values (all in GB decimal)
       const availableVram = gpuVram * gpuUtilization;
       const weightsPerGpu = modelWeights / numGpus;
       const cudaGraphsSize = cudaGraphsEnabled ? 2.5 : 0;
@@ -1519,22 +1499,22 @@
       // Available for KV cache
       const fixedOverhead = weightsPerGpu + cudaGraphsSize + overhead;
       const kvAvailable = Math.max(0, availableVram - fixedOverhead);
-      const kvAvailableBytes = kvAvailable * 1024 * 1024 * 1024;
-      
+      const kvAvailableBytes = kvAvailable * 1e9; // GB to bytes (decimal)
+
       // Max tokens that can fit in KV cache
       const maxTokensInCache = Math.floor(kvAvailableBytes / bytesPerToken);
-      
+
       // Effective limits
       const maxContextSingle = Math.min(maxModelLen, maxTokensInCache);
       const avgContextAll = Math.floor(maxTokensInCache / maxNumSeqs);
-      
+
       // Recommended seqs (targeting ~32K avg context)
       const targetAvgContext = 32768;
       const recommendedSeqs = Math.max(1, Math.floor(maxTokensInCache / targetAvgContext));
-      
+
       // Estimate actual KV usage based on max_batched_tokens as proxy
       const estimatedActiveTokens = Math.min(maxBatchedTokens * maxNumSeqs / 2, maxTokensInCache);
-      const estimatedKvUsage = (estimatedActiveTokens * bytesPerToken) / (1024 * 1024 * 1024);
+      const estimatedKvUsage = (estimatedActiveTokens * bytesPerToken) / 1e9; // bytes to GB (decimal)
       
       // Total usage
       const totalUsage = weightsPerGpu + estimatedKvUsage + cudaGraphsSize + overhead;
