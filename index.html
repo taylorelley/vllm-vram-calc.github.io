@@ -697,6 +697,51 @@
     .moe-fields.visible {
       display: block;
     }
+
+    /* KV Cache Comparison Bar */
+    .kv-comparison-bar-container {
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .kv-comparison-bar {
+      height: 20px;
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid var(--border);
+    }
+
+    .kv-comparison-fill {
+      height: 100%;
+      transition: width 0.3s ease, background 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--bg-primary);
+      position: relative;
+    }
+
+    .kv-comparison-fill.ok {
+      background: linear-gradient(90deg, var(--accent-green), var(--accent-green-dim));
+    }
+
+    .kv-comparison-fill.warning {
+      background: linear-gradient(90deg, var(--accent-yellow), #e6b800);
+    }
+
+    .kv-comparison-fill.error {
+      background: linear-gradient(90deg, var(--accent-red), #cc3355);
+    }
+
+    .kv-comparison-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.3rem;
+    }
   </style>
 </head>
 <body>
@@ -1000,6 +1045,29 @@
           <div class="panel-header">
             <div class="panel-icon config">📈</div>
             <h2 class="panel-title">Capacity Analysis</h2>
+          </div>
+
+          <div class="results-section">
+            <div class="section-title">KV Cache: Allocated vs. Required</div>
+            <div class="result-row">
+              <span class="result-label">Allocated KV Cache Space</span>
+              <span class="result-value" id="kv-allocated-display">-</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">Required (max-model-len × max-num-seqs)</span>
+              <span class="result-value" id="kv-required-display">-</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">Utilization</span>
+              <span class="result-value" id="kv-utilization-display">-</span>
+            </div>
+            <div class="kv-comparison-bar-container">
+              <div class="kv-comparison-label">Required vs. Allocated</div>
+              <div class="kv-comparison-bar">
+                <div class="kv-comparison-fill" id="kv-comparison-fill"></div>
+              </div>
+            </div>
+            <div id="kv-comparison-status"></div>
           </div>
 
           <div class="results-section">
@@ -1668,6 +1736,69 @@
       `;
 
       document.getElementById('memory-percent').textContent = usagePercent.toFixed(1) + '%';
+
+      // Calculate KV cache comparison
+      const requiredTokens = maxModelLen * maxNumSeqs;
+      const requiredKvBytes = requiredTokens * bytesPerToken;
+      const requiredKvGB = requiredKvBytes / 1e9;
+      const kvUtilization = maxTokensInCache > 0 ? (requiredTokens / maxTokensInCache) * 100 : 0;
+
+      // Update KV cache comparison section
+      document.getElementById('kv-allocated-display').textContent = formatBytes(kvAvailable);
+      document.getElementById('kv-required-display').textContent = formatBytes(requiredKvGB);
+
+      const kvUtilizationElem = document.getElementById('kv-utilization-display');
+      kvUtilizationElem.textContent = kvUtilization.toFixed(1) + '%';
+
+      // Color code the utilization
+      if (kvUtilization > 100) {
+        kvUtilizationElem.className = 'result-value error';
+      } else if (kvUtilization > 90) {
+        kvUtilizationElem.className = 'result-value warning';
+      } else {
+        kvUtilizationElem.className = 'result-value highlight';
+      }
+
+      // Update KV comparison visual bar
+      const kvComparisonFill = document.getElementById('kv-comparison-fill');
+      const kvBarWidth = Math.min(100, kvUtilization);
+      let kvBarClass;
+
+      if (kvUtilization > 100) {
+        kvBarClass = 'error';
+      } else if (kvUtilization > 90) {
+        kvBarClass = 'warning';
+      } else if (kvUtilization > 70) {
+        kvBarClass = 'warning';
+      } else {
+        kvBarClass = 'ok';
+      }
+
+      kvComparisonFill.style.width = kvBarWidth + '%';
+      kvComparisonFill.className = `kv-comparison-fill ${kvBarClass}`;
+      kvComparisonFill.textContent = kvUtilization.toFixed(1) + '%';
+
+      // Update KV comparison status badge
+      const kvComparisonStatus = document.getElementById('kv-comparison-status');
+      let kvStatusClass, kvStatusText;
+
+      if (requiredTokens > maxTokensInCache) {
+        kvStatusClass = 'error';
+        const shortage = requiredTokens - maxTokensInCache;
+        kvStatusText = `⚠ Insufficient KV Cache: Need ${formatNumber(shortage)} more tokens. Reduce max-model-len or max-num-seqs`;
+      } else if (kvUtilization > 90) {
+        kvStatusClass = 'warning';
+        kvStatusText = `⚡ KV Cache is ${kvUtilization.toFixed(0)}% utilized - very tight, may cause issues under load`;
+      } else if (kvUtilization > 70) {
+        kvStatusClass = 'warning';
+        kvStatusText = `✓ KV Cache is ${kvUtilization.toFixed(0)}% utilized - acceptable but monitor usage`;
+      } else {
+        kvStatusClass = 'ok';
+        const headroom = maxTokensInCache - requiredTokens;
+        kvStatusText = `✓ Good headroom: ${formatNumber(headroom)} tokens available beyond requirements`;
+      }
+
+      kvComparisonStatus.innerHTML = `<div class="status-badge ${kvStatusClass}" style="margin-top: 1rem; width: 100%;">${kvStatusText}</div>`;
 
       // Update capacity analysis
       document.getElementById('kv-available').textContent = formatBytes(kvAvailable);
