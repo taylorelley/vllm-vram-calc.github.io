@@ -945,8 +945,8 @@
           <div class="input-row">
             <div class="form-group">
               <label for="overhead-padding">Extra Overhead (GB)</label>
-              <input type="number" id="overhead-padding" value="0" min="0" max="10" step="0.1">
-              <p class="hint">Manual buffer for fragmentation or plugins</p>
+              <input type="number" id="overhead-padding" value="1.0" min="0" max="10" step="0.1">
+              <p class="hint">Framework/MoE/compilation overhead. Try 1-2 GB for large models, 0.5 GB for small</p>
             </div>
             <div class="form-group">
               <label for="overhead-notes">Overhead Inputs</label>
@@ -1573,7 +1573,11 @@
       const overheadEstimate = (activationBytes * 2) / 1e9;
       inputs.overheadEstimate.value = overheadEstimate.toFixed(2);
       const totalOverhead = overheadEstimate + overheadPadding;
-      const cudaGraphsSize = cudaGraphsEnabled ? (activationBytes / 1e9) : 0;
+      // CUDA graphs: vLLM captures graphs for multiple batch sizes and sequence lengths.
+      // PIECEWISE mode typically captures 50-100+ graphs. Multiply by 10-12x to account for this.
+      // For large models (>30B) or MoE, this can be 2-4 GB. Users should adjust if needed.
+      const cudaGraphMultiplier = 10;  // Empirically ~10x activation buffer for multi-graph capture
+      const cudaGraphsSize = cudaGraphsEnabled ? (activationBytes / 1e9) * cudaGraphMultiplier : 0;
       const overheadNotes = document.getElementById('overhead-notes');
       overheadNotes.textContent = `${formatNumber(activationTokens)} tokens × ${formatNumber(hiddenSizePerGpu)} hidden × ${activationDtypeBytes} bytes × 2 buffers`;
       
