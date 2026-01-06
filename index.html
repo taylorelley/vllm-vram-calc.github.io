@@ -1605,12 +1605,12 @@
       const targetAvgContext = 32768;
       const recommendedSeqs = Math.max(1, Math.floor(maxTokensInCache / targetAvgContext));
 
-      // Estimate actual KV usage based on max_batched_tokens as proxy
-      const estimatedActiveTokens = Math.min(prefillTokens + decodeTokens, maxTokensInCache);
-      const estimatedKvUsage = (estimatedActiveTokens * bytesPerToken) / 1e9; // bytes to GB (decimal)
-      
-      // Total usage
-      const totalUsage = weightsPerGpu + estimatedKvUsage + cudaGraphsSize + totalOverhead;
+      // vLLM allocates the FULL KV cache pool at startup, not just estimated active usage.
+      // This matches what nvidia-smi shows in real deployments.
+      const kvCacheAllocated = kvAvailable;  // Full KV cache pool allocation
+
+      // Total usage (what nvidia-smi will show)
+      const totalUsage = weightsPerGpu + kvCacheAllocated + cudaGraphsSize + totalOverhead;
       const usagePercent = gpuVram > 0 ? (totalUsage / gpuVram) * 100 : 0;
       const freeSpace = Math.max(0, gpuVram - totalUsage);
 
@@ -1622,15 +1622,15 @@
           <td>${formatBytes(weightsPerGpu)}</td>
         </tr>
         <tr>
-          <td>KV Cache (estimated)</td>
-          <td>${formatBytes(estimatedKvUsage)}</td>
+          <td>KV Cache Pool (allocated)</td>
+          <td>${formatBytes(kvCacheAllocated)}</td>
         </tr>
         <tr>
           <td>CUDA Graphs</td>
           <td>${formatBytes(cudaGraphsSize)}</td>
         </tr>
         <tr>
-          <td>Overhead (estimate)</td>
+          <td>Overhead (activation)</td>
           <td>${formatBytes(overheadEstimate)}</td>
         </tr>
         <tr>
@@ -1638,7 +1638,7 @@
           <td>${formatBytes(overheadPadding)}</td>
         </tr>
         <tr class="total-row">
-          <td>Total Used</td>
+          <td>Total Allocated</td>
           <td>${formatBytes(totalUsage)}</td>
         </tr>
         <tr>
@@ -1654,7 +1654,7 @@
       // Update memory bar
       const memoryBar = document.getElementById('memory-bar');
       const weightsPercent = gpuVram > 0 ? (weightsPerGpu / gpuVram) * 100 : 0;
-      const kvPercent = gpuVram > 0 ? (estimatedKvUsage / gpuVram) * 100 : 0;
+      const kvPercent = gpuVram > 0 ? (kvCacheAllocated / gpuVram) * 100 : 0;
       const cudaPercent = gpuVram > 0 ? (cudaGraphsSize / gpuVram) * 100 : 0;
       const overheadPercent = gpuVram > 0 ? (totalOverhead / gpuVram) * 100 : 0;
       const freePercent = gpuVram > 0 ? (freeSpace / gpuVram) * 100 : 0;
