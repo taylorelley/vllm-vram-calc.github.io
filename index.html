@@ -1,0 +1,1645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM VRAM Calculator</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #12121a;
+      --bg-tertiary: #1a1a24;
+      --bg-card: #16161f;
+      --border: #2a2a3a;
+      --border-highlight: #3a3a4a;
+      --text-primary: #e8e8ed;
+      --text-secondary: #9090a0;
+      --text-muted: #606070;
+      --accent-green: #00ff88;
+      --accent-green-dim: #00cc6a;
+      --accent-red: #ff4466;
+      --accent-yellow: #ffcc00;
+      --accent-blue: #4488ff;
+      --accent-purple: #aa66ff;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, var(--accent-green) 0%, var(--accent-blue) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+
+    @media (max-width: 1000px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+    }
+
+    .panel-icon.gpu { background: linear-gradient(135deg, var(--accent-green) 0%, var(--accent-blue) 50%); }
+    .panel-icon.model { background: linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 100%); }
+    .panel-icon.config { background: linear-gradient(135deg, var(--accent-yellow) 0%, var(--accent-red) 100%); }
+    .panel-icon.result { background: linear-gradient(135deg, var(--accent-green) 0%, var(--accent-green-dim) 100%); }
+
+    .panel-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 0.5rem;
+    }
+
+    input[type="number"], select {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input[type="number"]:focus, select:focus {
+      outline: none;
+      border-color: var(--accent-green);
+      box-shadow: 0 0 0 3px rgba(0, 255, 136, 0.1);
+    }
+
+    input[type="number"]::-webkit-inner-spin-button {
+      opacity: 1;
+    }
+
+    .input-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Results Panel */
+    .results-section {
+      margin-bottom: 1.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .results-section:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    .section-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0;
+    }
+
+    .result-label {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+
+    .result-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .result-value.highlight {
+      color: var(--accent-green);
+      font-size: 1.1rem;
+    }
+
+    .result-value.warning {
+      color: var(--accent-yellow);
+    }
+
+    .result-value.error {
+      color: var(--accent-red);
+    }
+
+    /* Memory Bar */
+    .memory-bar-container {
+      margin-top: 1.5rem;
+    }
+
+    .memory-bar-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .memory-bar {
+      height: 24px;
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      overflow: hidden;
+      display: flex;
+      position: relative;
+    }
+
+    .memory-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+      position: relative;
+    }
+
+    .memory-segment.weights { background: var(--accent-blue); }
+    .memory-segment.kv-cache { background: var(--accent-purple); }
+    .memory-segment.cuda-graphs { background: var(--accent-yellow); }
+    .memory-segment.overhead { background: var(--accent-red); opacity: 0.7; }
+    .memory-segment.free { background: var(--accent-green); opacity: 0.3; }
+
+    .memory-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    .legend-color.weights { background: var(--accent-blue); }
+    .legend-color.kv-cache { background: var(--accent-purple); }
+    .legend-color.cuda-graphs { background: var(--accent-yellow); }
+    .legend-color.overhead { background: var(--accent-red); opacity: 0.7; }
+    .legend-color.free { background: var(--accent-green); opacity: 0.3; }
+
+    /* Status Badge */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-top: 1rem;
+    }
+
+    .status-badge.ok {
+      background: rgba(0, 255, 136, 0.1);
+      color: var(--accent-green);
+      border: 1px solid rgba(0, 255, 136, 0.3);
+    }
+
+    .status-badge.warning {
+      background: rgba(255, 204, 0, 0.1);
+      color: var(--accent-yellow);
+      border: 1px solid rgba(255, 204, 0, 0.3);
+    }
+
+    .status-badge.error {
+      background: rgba(255, 68, 102, 0.1);
+      color: var(--accent-red);
+      border: 1px solid rgba(255, 68, 102, 0.3);
+    }
+
+    /* Command Output */
+    .command-output {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .command-output .flag {
+      color: var(--accent-green);
+    }
+
+    .command-output .value {
+      color: var(--accent-yellow);
+    }
+
+    /* Presets */
+    .presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .preset-btn {
+      padding: 0.5rem 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .preset-btn:hover {
+      border-color: var(--accent-green);
+      color: var(--text-primary);
+    }
+
+    .preset-btn.active {
+      background: rgba(0, 255, 136, 0.1);
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+    }
+
+    /* Breakdown table */
+    .breakdown-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+
+    .breakdown-table th,
+    .breakdown-table td {
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+
+    .breakdown-table th {
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .breakdown-table td {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .breakdown-table td:last-child {
+      text-align: right;
+    }
+
+    .breakdown-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .breakdown-table .total-row td {
+      font-weight: 600;
+      color: var(--accent-green);
+      border-top: 2px solid var(--border);
+    }
+
+    /* HuggingFace Integration */
+    .hf-input-row {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .hf-input-row input[type="text"] {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .hf-input-row input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent-green);
+      box-shadow: 0 0 0 3px rgba(0, 255, 136, 0.1);
+    }
+
+    .hf-input-row input[type="text"]::placeholder {
+      color: var(--text-muted);
+    }
+
+    .hf-fetch-btn {
+      padding: 0.75rem 1.25rem;
+      background: linear-gradient(135deg, var(--accent-green) 0%, var(--accent-green-dim) 100%);
+      border: none;
+      border-radius: 8px;
+      color: var(--bg-primary);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 80px;
+    }
+
+    .hf-fetch-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 255, 136, 0.3);
+    }
+
+    .hf-fetch-btn:active {
+      transform: translateY(0);
+    }
+
+    .hf-fetch-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .hf-fetch-btn .spinner {
+      width: 18px;
+      height: 18px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .hint.success {
+      color: var(--accent-green);
+    }
+
+    .hint.error {
+      color: var(--accent-red);
+    }
+
+    .hint.loading {
+      color: var(--accent-yellow);
+    }
+
+    /* Model info card */
+    .model-info-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .model-info-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .model-info-icon {
+      font-size: 1.5rem;
+    }
+
+    .model-info-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+    }
+
+    .model-info-author {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .model-info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.5rem 1rem;
+    }
+
+    .model-info-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+    }
+
+    .model-info-item .label {
+      color: var(--text-muted);
+    }
+
+    .model-info-item .value {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-secondary);
+    }
+
+    .model-info-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.75rem;
+    }
+
+    .model-tag {
+      padding: 0.2rem 0.5rem;
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .model-tag.quant {
+      background: rgba(170, 102, 255, 0.2);
+      color: var(--accent-purple);
+    }
+
+    .model-tag.arch {
+      background: rgba(68, 136, 255, 0.2);
+      color: var(--accent-blue);
+    }
+
+    /* Section Divider */
+    .section-divider {
+      display: flex;
+      align-items: center;
+      margin: 1.5rem 0 1rem 0;
+      gap: 1rem;
+    }
+
+    .section-divider::before,
+    .section-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .section-divider span {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    /* Quantization Estimate Card */
+    .quant-estimate-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+
+    .quant-estimate-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .quant-icon {
+      font-size: 1rem;
+    }
+
+    .quant-estimate-values {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .quant-estimate-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .quant-estimate-item .label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .quant-estimate-item .value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+    }
+
+    .quant-estimate-item.total .value {
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+
+    .apply-estimate-btn {
+      width: 100%;
+      padding: 0.6rem 1rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .apply-estimate-btn:hover {
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+      background: rgba(0, 255, 136, 0.05);
+    }
+
+    /* MoE specific styling */
+    .moe-section {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px dashed var(--border);
+    }
+
+    .moe-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .moe-toggle input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent-green);
+      cursor: pointer;
+    }
+
+    .moe-toggle label {
+      margin-bottom: 0;
+      cursor: pointer;
+      color: var(--text-primary);
+    }
+
+    .moe-fields {
+      display: none;
+    }
+
+    .moe-fields.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>vLLM VRAM Calculator</h1>
+      <p class="subtitle">Plan GPU memory allocation for LLM deployments</p>
+    </header>
+
+    <div class="grid">
+      <!-- Left Column: Inputs -->
+      <div class="inputs-column">
+        <!-- GPU Configuration -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-icon gpu">🖥</div>
+            <h2 class="panel-title">GPU Configuration</h2>
+          </div>
+          
+          <div class="form-group">
+            <label>GPU Preset</label>
+            <div class="presets" id="gpu-presets">
+              <button class="preset-btn" data-vram="24" data-name="RTX 4090">RTX 4090 (24GB)</button>
+              <button class="preset-btn active" data-vram="32" data-name="RTX 5090">RTX 5090 (32GB)</button>
+              <button class="preset-btn" data-vram="48" data-name="A6000">A6000 (48GB)</button>
+              <button class="preset-btn" data-vram="80" data-name="H100">H100 (80GB)</button>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="gpu-vram">VRAM per GPU (GB)</label>
+              <input type="number" id="gpu-vram" value="32" min="1" max="192" step="1">
+            </div>
+            <div class="form-group">
+              <label for="num-gpus">Number of GPUs (TP size)</label>
+              <input type="number" id="num-gpus" value="2" min="1" max="8" step="1">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="gpu-utilization">GPU Memory Utilization</label>
+            <input type="number" id="gpu-utilization" value="0.90" min="0.5" max="0.99" step="0.01">
+            <p class="hint">Typically 0.85-0.95. Lower = more headroom for spikes</p>
+          </div>
+        </div>
+
+        <!-- Model Configuration -->
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <div class="panel-icon model">🧠</div>
+            <h2 class="panel-title">Model Configuration</h2>
+          </div>
+
+          <!-- HuggingFace Integration -->
+          <div class="form-group">
+            <label for="hf-model-id">Load from HuggingFace</label>
+            <div class="hf-input-row">
+              <input type="text" id="hf-model-id" placeholder="e.g. MultiverseComputingCAI/HyperNova-60B">
+              <button class="hf-fetch-btn" id="hf-fetch-btn">
+                <span class="btn-text">Fetch</span>
+                <span class="btn-loading" style="display: none;">
+                  <svg class="spinner" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/>
+                  </svg>
+                </span>
+              </button>
+            </div>
+            <p class="hint" id="hf-status">Enter a model ID and click Fetch to load config</p>
+          </div>
+
+          <div class="form-group">
+            <label>Model Preset</label>
+            <div class="presets" id="model-presets">
+              <button class="preset-btn active" data-weights="34.2" data-layers="64" data-kvheads="8" data-headdim="64" data-name="HyperNova-60B" data-context="131072" data-quant="mxfp4" data-bits="4" data-baseparams="60">HyperNova-60B</button>
+              <button class="preset-btn" data-weights="34.2" data-layers="64" data-kvheads="8" data-headdim="64" data-name="gpt-oss-120b" data-context="131072" data-quant="mxfp4" data-bits="4" data-baseparams="120">gpt-oss-120b</button>
+              <button class="preset-btn" data-weights="42" data-layers="80" data-kvheads="8" data-headdim="128" data-name="Qwen3-80B-AWQ" data-context="131072" data-quant="awq" data-bits="4" data-baseparams="80">Qwen3-80B-AWQ</button>
+              <button class="preset-btn" data-weights="140" data-layers="80" data-kvheads="8" data-headdim="128" data-name="Llama-70B-FP16" data-context="131072" data-quant="none" data-bits="16" data-baseparams="70">Llama-70B-FP16</button>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="model-weights">Model Weights (GB)</label>
+              <input type="number" id="model-weights" value="34.2" min="0.1" max="500" step="0.1">
+              <p class="hint">Total size on disk</p>
+            </div>
+            <div class="form-group">
+              <label for="num-layers">Number of Layers</label>
+              <input type="number" id="num-layers" value="64" min="1" max="200" step="1">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="kv-heads">KV Heads (GQA)</label>
+              <input type="number" id="kv-heads" value="8" min="1" max="128" step="1">
+              <p class="hint">Key-Value attention heads</p>
+            </div>
+            <div class="form-group">
+              <label for="head-dim">Head Dimension</label>
+              <input type="number" id="head-dim" value="64" min="32" max="256" step="8">
+            </div>
+          </div>
+
+          <!-- Quantization Configuration -->
+          <div class="section-divider">
+            <span>Quantization Settings</span>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="quant-method">Weight Quantization</label>
+              <select id="quant-method">
+                <option value="none">None (FP16/BF16)</option>
+                <option value="fp8">FP8 (8-bit float)</option>
+                <option value="mxfp4" selected>MXFP4 (4-bit MX)</option>
+                <option value="awq">AWQ (4-bit)</option>
+                <option value="gptq">GPTQ (4-bit)</option>
+                <option value="bnb-nf4">BitsAndBytes NF4</option>
+                <option value="bnb-int8">BitsAndBytes INT8</option>
+                <option value="exl2">EXL2 (variable)</option>
+                <option value="gguf">GGUF (variable)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="quant-bits">Effective Bits</label>
+              <input type="number" id="quant-bits" value="4" min="1" max="16" step="0.5">
+              <p class="hint">Bits per weight parameter</p>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="base-params">Base Model Params (B)</label>
+              <input type="number" id="base-params" value="60" min="0.1" max="1000" step="0.1">
+              <p class="hint">Unquantized parameter count</p>
+            </div>
+            <div class="form-group">
+              <label for="quant-group-size">Group Size</label>
+              <select id="quant-group-size">
+                <option value="0">N/A (per-tensor)</option>
+                <option value="32">32 (block-wise)</option>
+                <option value="64">64</option>
+                <option value="128" selected>128 (common)</option>
+                <option value="256">256</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="quant-estimate-card" id="quant-estimate-card">
+            <div class="quant-estimate-header">
+              <span class="quant-icon">📦</span>
+              <span>Estimated Model Size</span>
+            </div>
+            <div class="quant-estimate-values">
+              <div class="quant-estimate-item">
+                <span class="label">Weights</span>
+                <span class="value" id="est-weights">-</span>
+              </div>
+              <div class="quant-estimate-item">
+                <span class="label">Scales/Zeros</span>
+                <span class="value" id="est-scales">-</span>
+              </div>
+              <div class="quant-estimate-item total">
+                <span class="label">Total</span>
+                <span class="value" id="est-total">-</span>
+              </div>
+            </div>
+            <button class="apply-estimate-btn" id="apply-estimate-btn">Apply Estimate →</button>
+          </div>
+        </div>
+
+        <!-- vLLM Configuration -->
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <div class="panel-icon config">⚙</div>
+            <h2 class="panel-title">vLLM Configuration</h2>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="max-model-len">Max Model Length</label>
+              <input type="number" id="max-model-len" value="131072" min="1024" max="1048576" step="1024">
+              <p class="hint">Maximum context window</p>
+            </div>
+            <div class="form-group">
+              <label for="max-num-seqs">Max Num Seqs</label>
+              <input type="number" id="max-num-seqs" value="8" min="1" max="256" step="1">
+              <p class="hint">Concurrent sequences</p>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="max-batched-tokens">Max Batched Tokens</label>
+              <input type="number" id="max-batched-tokens" value="65536" min="1024" max="262144" step="1024">
+              <p class="hint">Tokens per forward pass</p>
+            </div>
+            <div class="form-group">
+              <label for="kv-cache-dtype">KV Cache Dtype</label>
+              <select id="kv-cache-dtype">
+                <option value="2" selected>BF16/FP16 (2 bytes)</option>
+                <option value="1">FP8 (1 byte)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="cuda-graphs">CUDA Graphs</label>
+              <select id="cuda-graphs">
+                <option value="1" selected>Enabled (~2.5GB)</option>
+                <option value="0">Disabled (--enforce-eager)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="overhead">Overhead Estimate (GB)</label>
+              <input type="number" id="overhead" value="1.5" min="0" max="10" step="0.1">
+              <p class="hint">Activations, buffers, etc.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Results -->
+      <div class="results-column">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-icon result">📊</div>
+            <h2 class="panel-title">Memory Breakdown (Per GPU)</h2>
+          </div>
+
+          <table class="breakdown-table">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Size</th>
+              </tr>
+            </thead>
+            <tbody id="breakdown-body">
+              <!-- Filled by JS -->
+            </tbody>
+          </table>
+
+          <div class="memory-bar-container">
+            <div class="memory-bar-label">
+              <span>Memory Usage</span>
+              <span id="memory-percent">0%</span>
+            </div>
+            <div class="memory-bar" id="memory-bar">
+              <!-- Filled by JS -->
+            </div>
+            <div class="memory-legend">
+              <div class="legend-item"><div class="legend-color weights"></div>Weights</div>
+              <div class="legend-item"><div class="legend-color kv-cache"></div>KV Cache</div>
+              <div class="legend-item"><div class="legend-color cuda-graphs"></div>CUDA Graphs</div>
+              <div class="legend-item"><div class="legend-color overhead"></div>Overhead</div>
+              <div class="legend-item"><div class="legend-color free"></div>Free</div>
+            </div>
+          </div>
+
+          <div id="status-container"></div>
+        </div>
+
+        <!-- Capacity Analysis -->
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <div class="panel-icon config">📈</div>
+            <h2 class="panel-title">Capacity Analysis</h2>
+          </div>
+
+          <div class="results-section">
+            <div class="section-title">KV Cache Capacity</div>
+            <div class="result-row">
+              <span class="result-label">Available for KV Cache</span>
+              <span class="result-value" id="kv-available">-</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">Bytes per Token</span>
+              <span class="result-value" id="bytes-per-token">-</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">Max Tokens in Cache</span>
+              <span class="result-value highlight" id="max-tokens">-</span>
+            </div>
+          </div>
+
+          <div class="results-section">
+            <div class="section-title">Effective Limits</div>
+            <div class="result-row">
+              <span class="result-label">Max Context (1 seq)</span>
+              <span class="result-value" id="max-context-single">-</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">Avg Context (all seqs)</span>
+              <span class="result-value" id="avg-context-all">-</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">Recommended max-num-seqs</span>
+              <span class="result-value highlight" id="recommended-seqs">-</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generated Command -->
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <div class="panel-icon model">💻</div>
+            <h2 class="panel-title">Generated vLLM Command</h2>
+          </div>
+          <div class="command-output" id="command-output">
+            <!-- Filled by JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // DOM Elements
+    const inputs = {
+      gpuVram: document.getElementById('gpu-vram'),
+      numGpus: document.getElementById('num-gpus'),
+      gpuUtilization: document.getElementById('gpu-utilization'),
+      modelWeights: document.getElementById('model-weights'),
+      numLayers: document.getElementById('num-layers'),
+      kvHeads: document.getElementById('kv-heads'),
+      headDim: document.getElementById('head-dim'),
+      maxModelLen: document.getElementById('max-model-len'),
+      maxNumSeqs: document.getElementById('max-num-seqs'),
+      maxBatchedTokens: document.getElementById('max-batched-tokens'),
+      kvCacheDtype: document.getElementById('kv-cache-dtype'),
+      cudaGraphs: document.getElementById('cuda-graphs'),
+      overhead: document.getElementById('overhead')
+    };
+
+    // Quantization inputs (defined early for preset handlers)
+    const quantInputs = {
+      method: document.getElementById('quant-method'),
+      bits: document.getElementById('quant-bits'),
+      baseParams: document.getElementById('base-params'),
+      groupSize: document.getElementById('quant-group-size')
+    };
+
+    const applyEstimateBtn = document.getElementById('apply-estimate-btn');
+
+    // Quantization method presets
+    const quantPresets = {
+      'none': { bits: 16, hasScales: false },
+      'fp8': { bits: 8, hasScales: false },
+      'mxfp4': { bits: 4, hasScales: true, scaleOverhead: 0.125 },
+      'awq': { bits: 4, hasScales: true, scaleOverhead: 0.1 },
+      'gptq': { bits: 4, hasScales: true, scaleOverhead: 0.1 },
+      'bnb-nf4': { bits: 4, hasScales: true, scaleOverhead: 0.125 },
+      'bnb-int8': { bits: 8, hasScales: true, scaleOverhead: 0.0625 },
+      'exl2': { bits: 4, hasScales: true, scaleOverhead: 0.15 },
+      'gguf': { bits: 4, hasScales: true, scaleOverhead: 0.1 }
+    };
+
+    function calculateQuantEstimate() {
+      const method = quantInputs.method.value;
+      const bits = parseFloat(quantInputs.bits.value);
+      const baseParams = parseFloat(quantInputs.baseParams.value) * 1e9;
+      const groupSize = parseInt(quantInputs.groupSize.value);
+      const preset = quantPresets[method];
+
+      const weightBytes = baseParams * (bits / 8);
+      const weightGB = weightBytes / (1024 ** 3);
+
+      let scaleGB = 0;
+      if (preset?.hasScales && groupSize > 0) {
+        const numGroups = baseParams / groupSize;
+        const scaleBytes = numGroups * 2;
+        const zeroBytes = method.includes('awq') || method.includes('gptq') ? numGroups * 2 : 0;
+        scaleGB = (scaleBytes + zeroBytes) / (1024 ** 3);
+      } else if (preset?.scaleOverhead) {
+        scaleGB = weightGB * preset.scaleOverhead;
+      }
+
+      const totalGB = weightGB + scaleGB;
+
+      document.getElementById('est-weights').textContent = weightGB.toFixed(2) + ' GB';
+      document.getElementById('est-scales').textContent = scaleGB.toFixed(2) + ' GB';
+      document.getElementById('est-total').textContent = totalGB.toFixed(2) + ' GB';
+
+      return totalGB;
+    }
+
+    // HuggingFace Integration
+    const hfModelId = document.getElementById('hf-model-id');
+    const hfFetchBtn = document.getElementById('hf-fetch-btn');
+    const hfStatus = document.getElementById('hf-status');
+    const btnText = hfFetchBtn.querySelector('.btn-text');
+    const btnLoading = hfFetchBtn.querySelector('.btn-loading');
+
+    // Model info card container (will be created dynamically)
+    let modelInfoCard = null;
+
+    async function fetchHuggingFaceModel(modelId) {
+      // Clean up model ID
+      modelId = modelId.trim();
+      if (!modelId) {
+        throw new Error('Please enter a model ID');
+      }
+
+      // Fetch model info from HF API
+      const modelInfoUrl = `https://huggingface.co/api/models/${modelId}`;
+      const configUrl = `https://huggingface.co/${modelId}/resolve/main/config.json`;
+      
+      // Fetch both in parallel
+      const [modelInfoRes, configRes] = await Promise.all([
+        fetch(modelInfoUrl),
+        fetch(configUrl)
+      ]);
+
+      if (!modelInfoRes.ok) {
+        throw new Error(`Model not found: ${modelId}`);
+      }
+
+      const modelInfo = await modelInfoRes.json();
+      
+      let config = null;
+      if (configRes.ok) {
+        config = await configRes.json();
+      }
+
+      return { modelInfo, config };
+    }
+
+    function estimateModelWeights(modelInfo, config) {
+      // Try to get size from safetensors info
+      if (modelInfo.safetensors?.total) {
+        return modelInfo.safetensors.total / (1024 * 1024 * 1024); // bytes to GB
+      }
+
+      // Try to estimate from parameters
+      if (modelInfo.safetensors?.parameters) {
+        const params = Object.values(modelInfo.safetensors.parameters).reduce((a, b) => a + b, 0);
+        // Estimate based on dtype
+        const hasQuantization = modelInfo.tags?.some(t => 
+          t.includes('awq') || t.includes('gptq') || t.includes('bnb') || 
+          t.includes('4bit') || t.includes('8bit') || t.includes('fp8') ||
+          t.includes('mxfp4')
+        );
+        const bytesPerParam = hasQuantization ? 0.5 : 2; // 4-bit vs fp16
+        return (params * bytesPerParam) / (1024 * 1024 * 1024);
+      }
+
+      // Fallback: try to parse from model card or name
+      const nameMatch = modelInfo.modelId?.match(/(\d+)[bB]/);
+      if (nameMatch) {
+        const billions = parseInt(nameMatch[1]);
+        const hasQuantization = modelInfo.tags?.some(t => 
+          t.includes('awq') || t.includes('gptq') || t.includes('bnb') || 
+          t.includes('4bit') || t.includes('8bit')
+        );
+        return hasQuantization ? billions * 0.5 : billions * 2;
+      }
+
+      return null;
+    }
+
+    function extractModelConfig(modelInfo, config) {
+      const result = {
+        name: modelInfo.modelId?.split('/').pop() || 'Unknown',
+        author: modelInfo.modelId?.split('/')[0] || 'Unknown',
+        architecture: null,
+        numLayers: null,
+        kvHeads: null,
+        headDim: null,
+        maxContext: null,
+        weightsGB: null,
+        quantization: null,
+        tags: modelInfo.tags || []
+      };
+
+      // Extract architecture
+      if (config?.architectures?.length) {
+        result.architecture = config.architectures[0];
+      } else if (modelInfo.config?.architectures?.length) {
+        result.architecture = modelInfo.config.architectures[0];
+      } else if (modelInfo.pipeline_tag) {
+        result.architecture = modelInfo.pipeline_tag;
+      }
+
+      // Detect quantization from tags
+      const quantTags = ['awq', 'gptq', 'bnb', '4bit', '8bit', 'fp8', 'mxfp4', 'gguf', 'exl2'];
+      for (const tag of result.tags) {
+        const lowerTag = tag.toLowerCase();
+        for (const qt of quantTags) {
+          if (lowerTag.includes(qt)) {
+            result.quantization = qt.toUpperCase();
+            break;
+          }
+        }
+        if (result.quantization) break;
+      }
+
+      // Extract from config.json
+      if (config) {
+        // Number of layers
+        result.numLayers = config.num_hidden_layers || 
+                          config.n_layer || 
+                          config.num_layers ||
+                          config.n_layers;
+
+        // KV heads (for GQA)
+        result.kvHeads = config.num_key_value_heads || 
+                        config.num_kv_heads ||
+                        config.kv_heads ||
+                        config.num_attention_heads || // fallback to MHA
+                        config.n_head;
+
+        // Head dimension
+        if (config.head_dim) {
+          result.headDim = config.head_dim;
+        } else if (config.hidden_size && (config.num_attention_heads || config.n_head)) {
+          result.headDim = config.hidden_size / (config.num_attention_heads || config.n_head);
+        }
+
+        // Max context
+        result.maxContext = config.max_position_embeddings ||
+                           config.max_seq_len ||
+                           config.max_sequence_length ||
+                           config.n_positions ||
+                           config.seq_length;
+      }
+
+      // Estimate weights
+      result.weightsGB = estimateModelWeights(modelInfo, config);
+
+      return result;
+    }
+
+    function renderModelInfoCard(modelConfig) {
+      // Remove existing card if any
+      if (modelInfoCard) {
+        modelInfoCard.remove();
+      }
+
+      const card = document.createElement('div');
+      card.className = 'model-info-card';
+      card.innerHTML = `
+        <div class="model-info-header">
+          <span class="model-info-icon">🤗</span>
+          <div>
+            <div class="model-info-name">${modelConfig.name}</div>
+            <div class="model-info-author">by ${modelConfig.author}</div>
+          </div>
+        </div>
+        <div class="model-info-grid">
+          <div class="model-info-item">
+            <span class="label">Architecture</span>
+            <span class="value">${modelConfig.architecture || 'Unknown'}</span>
+          </div>
+          <div class="model-info-item">
+            <span class="label">Layers</span>
+            <span class="value">${modelConfig.numLayers || '?'}</span>
+          </div>
+          <div class="model-info-item">
+            <span class="label">KV Heads</span>
+            <span class="value">${modelConfig.kvHeads || '?'}</span>
+          </div>
+          <div class="model-info-item">
+            <span class="label">Head Dim</span>
+            <span class="value">${modelConfig.headDim || '?'}</span>
+          </div>
+          <div class="model-info-item">
+            <span class="label">Max Context</span>
+            <span class="value">${modelConfig.maxContext ? formatNumber(modelConfig.maxContext) : '?'}</span>
+          </div>
+          <div class="model-info-item">
+            <span class="label">Est. Size</span>
+            <span class="value">${modelConfig.weightsGB ? modelConfig.weightsGB.toFixed(1) + ' GB' : '?'}</span>
+          </div>
+        </div>
+        <div class="model-info-tags">
+          ${modelConfig.architecture ? `<span class="model-tag arch">${modelConfig.architecture}</span>` : ''}
+          ${modelConfig.quantization ? `<span class="model-tag quant">${modelConfig.quantization}</span>` : ''}
+          ${modelConfig.tags.slice(0, 5).map(t => `<span class="model-tag">${t}</span>`).join('')}
+        </div>
+      `;
+
+      // Insert after the HF input row
+      const hfFormGroup = hfModelId.closest('.form-group');
+      hfFormGroup.after(card);
+      modelInfoCard = card;
+    }
+
+    function applyModelConfig(modelConfig) {
+      // Apply extracted values to form
+      if (modelConfig.numLayers) {
+        inputs.numLayers.value = modelConfig.numLayers;
+      }
+      if (modelConfig.kvHeads) {
+        inputs.kvHeads.value = modelConfig.kvHeads;
+      }
+      if (modelConfig.headDim) {
+        inputs.headDim.value = Math.round(modelConfig.headDim);
+      }
+      if (modelConfig.maxContext) {
+        inputs.maxModelLen.value = modelConfig.maxContext;
+      }
+      if (modelConfig.weightsGB) {
+        inputs.modelWeights.value = modelConfig.weightsGB.toFixed(1);
+      }
+
+      // Apply quantization settings
+      if (modelConfig.quantization) {
+        const quantMap = {
+          'AWQ': 'awq',
+          'GPTQ': 'gptq',
+          'MXFP4': 'mxfp4',
+          'FP8': 'fp8',
+          '4BIT': 'awq',
+          '8BIT': 'bnb-int8',
+          'BNB': 'bnb-nf4',
+          'EXL2': 'exl2',
+          'GGUF': 'gguf'
+        };
+        const mappedQuant = quantMap[modelConfig.quantization] || 'none';
+        quantInputs.method.value = mappedQuant;
+        
+        // Set bits based on quant method
+        const preset = quantPresets[mappedQuant];
+        if (preset) {
+          quantInputs.bits.value = preset.bits;
+        }
+      }
+
+      // Try to set base params from model info
+      if (modelConfig.baseParams) {
+        quantInputs.baseParams.value = modelConfig.baseParams;
+      } else if (modelConfig.name) {
+        // Try to extract from name (e.g., "70B", "7b")
+        const paramMatch = modelConfig.name.match(/(\d+(?:\.\d+)?)\s*[bB]/);
+        if (paramMatch) {
+          quantInputs.baseParams.value = parseFloat(paramMatch[1]);
+        }
+      }
+
+      // Clear active preset since we loaded custom
+      document.querySelectorAll('#model-presets .preset-btn').forEach(b => b.classList.remove('active'));
+
+      // Update quant estimate
+      calculateQuantEstimate();
+
+      // Recalculate
+      calculate();
+    }
+
+    async function handleFetchClick() {
+      const modelId = hfModelId.value.trim();
+      
+      // Update UI state
+      hfFetchBtn.disabled = true;
+      btnText.style.display = 'none';
+      btnLoading.style.display = 'block';
+      hfStatus.textContent = 'Fetching model config...';
+      hfStatus.className = 'hint loading';
+
+      try {
+        const { modelInfo, config } = await fetchHuggingFaceModel(modelId);
+        const modelConfig = extractModelConfig(modelInfo, config);
+
+        // Render info card
+        renderModelInfoCard(modelConfig);
+
+        // Apply to form
+        applyModelConfig(modelConfig);
+
+        // Success message
+        const missingFields = [];
+        if (!modelConfig.numLayers) missingFields.push('layers');
+        if (!modelConfig.kvHeads) missingFields.push('KV heads');
+        if (!modelConfig.headDim) missingFields.push('head dim');
+        if (!modelConfig.weightsGB) missingFields.push('size');
+
+        if (missingFields.length > 0) {
+          hfStatus.textContent = `Loaded! Some values need manual entry: ${missingFields.join(', ')}`;
+          hfStatus.className = 'hint warning';
+        } else {
+          hfStatus.textContent = `Successfully loaded ${modelConfig.name}`;
+          hfStatus.className = 'hint success';
+        }
+
+      } catch (error) {
+        hfStatus.textContent = `Error: ${error.message}`;
+        hfStatus.className = 'hint error';
+        
+        // Remove model card on error
+        if (modelInfoCard) {
+          modelInfoCard.remove();
+          modelInfoCard = null;
+        }
+      } finally {
+        hfFetchBtn.disabled = false;
+        btnText.style.display = 'block';
+        btnLoading.style.display = 'none';
+      }
+    }
+
+    hfFetchBtn.addEventListener('click', handleFetchClick);
+    
+    // Allow Enter key to trigger fetch
+    hfModelId.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        handleFetchClick();
+      }
+    });
+
+    // Update bits when method changes
+    quantInputs.method.addEventListener('change', () => {
+      const preset = quantPresets[quantInputs.method.value];
+      if (preset) {
+        quantInputs.bits.value = preset.bits;
+      }
+      calculateQuantEstimate();
+    });
+
+    // Recalculate estimate when any quant input changes
+    Object.values(quantInputs).forEach(input => {
+      input.addEventListener('input', calculateQuantEstimate);
+      input.addEventListener('change', calculateQuantEstimate);
+    });
+
+    // Apply estimate to model weights
+    applyEstimateBtn.addEventListener('click', () => {
+      const estimate = calculateQuantEstimate();
+      inputs.modelWeights.value = estimate.toFixed(1);
+      calculate();
+    });
+
+    // Initial quant estimate
+    calculateQuantEstimate();
+
+    // Preset buttons
+    document.querySelectorAll('#gpu-presets .preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#gpu-presets .preset-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        inputs.gpuVram.value = btn.dataset.vram;
+        calculate();
+      });
+    });
+
+    document.querySelectorAll('#model-presets .preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#model-presets .preset-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        inputs.modelWeights.value = btn.dataset.weights;
+        inputs.numLayers.value = btn.dataset.layers;
+        inputs.kvHeads.value = btn.dataset.kvheads;
+        inputs.headDim.value = btn.dataset.headdim;
+        if (btn.dataset.context) {
+          inputs.maxModelLen.value = btn.dataset.context;
+        }
+        // Set quantization fields
+        if (btn.dataset.quant) {
+          quantInputs.method.value = btn.dataset.quant;
+        }
+        if (btn.dataset.bits) {
+          quantInputs.bits.value = btn.dataset.bits;
+        }
+        if (btn.dataset.baseparams) {
+          quantInputs.baseParams.value = btn.dataset.baseparams;
+        }
+        calculateQuantEstimate();
+        calculate();
+      });
+    });
+
+    // Add input listeners
+    Object.values(inputs).forEach(input => {
+      input.addEventListener('input', calculate);
+      input.addEventListener('change', calculate);
+    });
+
+    function formatBytes(gb) {
+      if (gb >= 1) return gb.toFixed(2) + ' GB';
+      return (gb * 1024).toFixed(0) + ' MB';
+    }
+
+    function formatNumber(num) {
+      if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+      if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+      return num.toFixed(0);
+    }
+
+    function calculate() {
+      // Get values
+      const gpuVram = parseFloat(inputs.gpuVram.value);
+      const numGpus = parseInt(inputs.numGpus.value);
+      const gpuUtilization = parseFloat(inputs.gpuUtilization.value);
+      const modelWeights = parseFloat(inputs.modelWeights.value);
+      const numLayers = parseInt(inputs.numLayers.value);
+      const kvHeads = parseInt(inputs.kvHeads.value);
+      const headDim = parseInt(inputs.headDim.value);
+      const maxModelLen = parseInt(inputs.maxModelLen.value);
+      const maxNumSeqs = parseInt(inputs.maxNumSeqs.value);
+      const maxBatchedTokens = parseInt(inputs.maxBatchedTokens.value);
+      const kvCacheDtypeBytes = parseInt(inputs.kvCacheDtype.value);
+      const cudaGraphsEnabled = inputs.cudaGraphs.value === '1';
+      const overhead = parseFloat(inputs.overhead.value);
+
+      // Calculate per-GPU values
+      const availableVram = gpuVram * gpuUtilization;
+      const weightsPerGpu = modelWeights / numGpus;
+      const cudaGraphsSize = cudaGraphsEnabled ? 2.5 : 0;
+      
+      // KV cache calculation
+      // Per token per layer: 2 (K+V) * kvHeads * headDim * dtype_bytes
+      // With TP, KV heads are split across GPUs
+      const kvHeadsPerGpu = Math.ceil(kvHeads / numGpus);
+      const bytesPerTokenPerLayer = 2 * kvHeadsPerGpu * headDim * kvCacheDtypeBytes;
+      const bytesPerToken = bytesPerTokenPerLayer * numLayers;
+      const bytesPerTokenKB = bytesPerToken / 1024;
+      
+      // Available for KV cache
+      const fixedOverhead = weightsPerGpu + cudaGraphsSize + overhead;
+      const kvAvailable = Math.max(0, availableVram - fixedOverhead);
+      const kvAvailableBytes = kvAvailable * 1024 * 1024 * 1024;
+      
+      // Max tokens that can fit in KV cache
+      const maxTokensInCache = Math.floor(kvAvailableBytes / bytesPerToken);
+      
+      // Effective limits
+      const maxContextSingle = Math.min(maxModelLen, maxTokensInCache);
+      const avgContextAll = Math.floor(maxTokensInCache / maxNumSeqs);
+      
+      // Recommended seqs (targeting ~32K avg context)
+      const targetAvgContext = 32768;
+      const recommendedSeqs = Math.max(1, Math.floor(maxTokensInCache / targetAvgContext));
+      
+      // Estimate actual KV usage based on max_batched_tokens as proxy
+      const estimatedActiveTokens = Math.min(maxBatchedTokens * maxNumSeqs / 2, maxTokensInCache);
+      const estimatedKvUsage = (estimatedActiveTokens * bytesPerToken) / (1024 * 1024 * 1024);
+      
+      // Total usage
+      const totalUsage = weightsPerGpu + estimatedKvUsage + cudaGraphsSize + overhead;
+      const usagePercent = (totalUsage / gpuVram) * 100;
+      const freeSpace = Math.max(0, gpuVram - totalUsage);
+
+      // Update breakdown table
+      const breakdownBody = document.getElementById('breakdown-body');
+      breakdownBody.innerHTML = `
+        <tr>
+          <td>Model Weights</td>
+          <td>${formatBytes(weightsPerGpu)}</td>
+        </tr>
+        <tr>
+          <td>KV Cache (estimated)</td>
+          <td>${formatBytes(estimatedKvUsage)}</td>
+        </tr>
+        <tr>
+          <td>CUDA Graphs</td>
+          <td>${formatBytes(cudaGraphsSize)}</td>
+        </tr>
+        <tr>
+          <td>Overhead</td>
+          <td>${formatBytes(overhead)}</td>
+        </tr>
+        <tr class="total-row">
+          <td>Total Used</td>
+          <td>${formatBytes(totalUsage)}</td>
+        </tr>
+        <tr>
+          <td>Available (${(gpuUtilization * 100).toFixed(0)}% of ${gpuVram}GB)</td>
+          <td>${formatBytes(availableVram)}</td>
+        </tr>
+        <tr>
+          <td>Free Headroom</td>
+          <td>${formatBytes(availableVram - totalUsage)}</td>
+        </tr>
+      `;
+
+      // Update memory bar
+      const memoryBar = document.getElementById('memory-bar');
+      const weightsPercent = (weightsPerGpu / gpuVram) * 100;
+      const kvPercent = (estimatedKvUsage / gpuVram) * 100;
+      const cudaPercent = (cudaGraphsSize / gpuVram) * 100;
+      const overheadPercent = (overhead / gpuVram) * 100;
+      const freePercent = (freeSpace / gpuVram) * 100;
+
+      memoryBar.innerHTML = `
+        <div class="memory-segment weights" style="width: ${weightsPercent}%"></div>
+        <div class="memory-segment kv-cache" style="width: ${kvPercent}%"></div>
+        <div class="memory-segment cuda-graphs" style="width: ${cudaPercent}%"></div>
+        <div class="memory-segment overhead" style="width: ${overheadPercent}%"></div>
+        <div class="memory-segment free" style="width: ${freePercent}%"></div>
+      `;
+
+      document.getElementById('memory-percent').textContent = usagePercent.toFixed(1) + '%';
+
+      // Update capacity analysis
+      document.getElementById('kv-available').textContent = formatBytes(kvAvailable);
+      document.getElementById('bytes-per-token').textContent = bytesPerTokenKB.toFixed(1) + ' KB';
+      document.getElementById('max-tokens').textContent = formatNumber(maxTokensInCache);
+      document.getElementById('max-context-single').textContent = formatNumber(maxContextSingle);
+      document.getElementById('avg-context-all').textContent = formatNumber(avgContextAll);
+      document.getElementById('recommended-seqs').textContent = recommendedSeqs;
+
+      // Update status
+      const statusContainer = document.getElementById('status-container');
+      let statusClass, statusText;
+      
+      if (totalUsage > availableVram) {
+        statusClass = 'error';
+        statusText = '⚠ OOM Risk: Reduce context, seqs, or enable FP8 KV cache';
+      } else if (totalUsage > availableVram * 0.95) {
+        statusClass = 'warning';
+        statusText = '⚡ Tight: May OOM under load. Consider reducing max-num-seqs';
+      } else {
+        statusClass = 'ok';
+        statusText = '✓ Configuration looks good';
+      }
+
+      statusContainer.innerHTML = `<div class="status-badge ${statusClass}">${statusText}</div>`;
+
+      // Generate command
+      const commandOutput = document.getElementById('command-output');
+      let command = `<span class="flag">--model</span> <span class="value">MODEL_NAME</span>\n`;
+      command += `<span class="flag">--tensor-parallel-size</span> <span class="value">${numGpus}</span>\n`;
+      command += `<span class="flag">--max-model-len</span> <span class="value">${maxModelLen}</span>\n`;
+      command += `<span class="flag">--max-num-seqs</span> <span class="value">${maxNumSeqs}</span>\n`;
+      command += `<span class="flag">--max-num-batched-tokens</span> <span class="value">${maxBatchedTokens}</span>\n`;
+      command += `<span class="flag">--gpu-memory-utilization</span> <span class="value">${gpuUtilization}</span>\n`;
+      command += `<span class="flag">--enable-chunked-prefill</span>\n`;
+      
+      if (!cudaGraphsEnabled) {
+        command += `<span class="flag">--enforce-eager</span>\n`;
+      }
+      
+      if (numGpus > 1) {
+        command += `<span class="flag">--disable-custom-all-reduce</span>\n`;
+      }
+
+      commandOutput.innerHTML = command;
+    }
+
+    // Initial calculation
+    calculate();
+  </script>
+</body>
+</html>
