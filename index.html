@@ -805,6 +805,21 @@
             </div>
           </div>
 
+          <div class="input-row">
+            <div class="form-group">
+              <label for="attn-heads">Attention Heads (Total)</label>
+              <input type="number" id="attn-heads" value="8" min="1" max="128" step="1">
+              <p class="hint">Total attention heads (>= KV heads)</p>
+            </div>
+            <div class="form-group">
+              <label for="activation-dtype">Activation Dtype</label>
+              <select id="activation-dtype">
+                <option value="2" selected>BF16/FP16 (2 bytes)</option>
+                <option value="1">FP8 (1 byte)</option>
+              </select>
+            </div>
+          </div>
+
           <!-- Quantization Configuration -->
           <div class="section-divider">
             <span>Quantization Settings</span>
@@ -916,14 +931,28 @@
             <div class="form-group">
               <label for="cuda-graphs">CUDA Graphs</label>
               <select id="cuda-graphs">
-                <option value="1" selected>Enabled (~2.5GB)</option>
+                <option value="1" selected>Enabled (calculated)</option>
                 <option value="0">Disabled (--enforce-eager)</option>
               </select>
             </div>
             <div class="form-group">
-              <label for="overhead">Overhead Estimate (GB)</label>
-              <input type="number" id="overhead" value="1.5" min="0" max="10" step="0.1">
-              <p class="hint">Activations, buffers, etc.</p>
+              <label for="overhead-estimate">Overhead Estimate (GB)</label>
+              <input type="number" id="overhead-estimate" value="0" min="0" step="0.01" readonly>
+              <p class="hint">Calculated from activation buffers</p>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label for="overhead-padding">Extra Overhead (GB)</label>
+              <input type="number" id="overhead-padding" value="0" min="0" max="10" step="0.1">
+              <p class="hint">Manual buffer for fragmentation or plugins</p>
+            </div>
+            <div class="form-group">
+              <label for="overhead-notes">Overhead Inputs</label>
+              <div class="hint" id="overhead-notes">
+                Prefill + decode tokens × hidden size per GPU × dtype
+              </div>
             </div>
           </div>
         </div>
@@ -1030,12 +1059,15 @@
       numLayers: document.getElementById('num-layers'),
       kvHeads: document.getElementById('kv-heads'),
       headDim: document.getElementById('head-dim'),
+      attnHeads: document.getElementById('attn-heads'),
       maxModelLen: document.getElementById('max-model-len'),
       maxNumSeqs: document.getElementById('max-num-seqs'),
       maxBatchedTokens: document.getElementById('max-batched-tokens'),
       kvCacheDtype: document.getElementById('kv-cache-dtype'),
+      activationDtype: document.getElementById('activation-dtype'),
       cudaGraphs: document.getElementById('cuda-graphs'),
-      overhead: document.getElementById('overhead')
+      overheadEstimate: document.getElementById('overhead-estimate'),
+      overheadPadding: document.getElementById('overhead-padding')
     };
 
     // Quantization inputs (defined early for preset handlers)
@@ -1172,6 +1204,7 @@
         author: modelInfo.modelId?.split('/')[0] || 'Unknown',
         architecture: null,
         numLayers: null,
+        attnHeads: null,
         kvHeads: null,
         headDim: null,
         maxContext: null,
@@ -1216,6 +1249,12 @@
                         config.kv_heads ||
                         config.num_attention_heads || // fallback to MHA
                         config.n_head;
+
+        // Attention heads (total)
+        result.attnHeads = config.num_attention_heads ||
+                          config.n_head ||
+                          config.attention_heads ||
+                          config.num_heads;
 
         // Head dimension
         if (config.head_dim) {
@@ -1268,6 +1307,10 @@
             <span class="value">${modelConfig.kvHeads || '?'}</span>
           </div>
           <div class="model-info-item">
+            <span class="label">Attn Heads</span>
+            <span class="value">${modelConfig.attnHeads || '?'}</span>
+          </div>
+          <div class="model-info-item">
             <span class="label">Head Dim</span>
             <span class="value">${modelConfig.headDim || '?'}</span>
           </div>
@@ -1300,6 +1343,11 @@
       }
       if (modelConfig.kvHeads) {
         inputs.kvHeads.value = modelConfig.kvHeads;
+      }
+      if (modelConfig.attnHeads) {
+        inputs.attnHeads.value = modelConfig.attnHeads;
+      } else if (modelConfig.kvHeads) {
+        inputs.attnHeads.value = modelConfig.kvHeads;
       }
       if (modelConfig.headDim) {
         inputs.headDim.value = Math.round(modelConfig.headDim);
@@ -1375,6 +1423,7 @@
         // Success message
         const missingFields = [];
         if (!modelConfig.numLayers) missingFields.push('layers');
+        if (!modelConfig.attnHeads) missingFields.push('attention heads');
         if (!modelConfig.kvHeads) missingFields.push('KV heads');
         if (!modelConfig.headDim) missingFields.push('head dim');
         if (!modelConfig.weightsGB) missingFields.push('size');
@@ -1475,6 +1524,16 @@
       return num.toFixed(0);
     }
 
+    function toNumber(value, fallback = 0) {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function toInt(value, fallback = 0) {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
     function calculate() {
       // UNITS: All memory values use decimal GB (1 GB = 1,000,000,000 bytes)
       // This matches GPU manufacturer specs and is consistent throughout calculations.
@@ -1482,24 +1541,41 @@
       // Conversion: GB (decimal) × 0.931323 ≈ GiB (binary)
 
       // Get values
-      const gpuVram = parseFloat(inputs.gpuVram.value);  // GB (decimal)
-      const numGpus = parseInt(inputs.numGpus.value);
-      const gpuUtilization = parseFloat(inputs.gpuUtilization.value);
-      const modelWeights = parseFloat(inputs.modelWeights.value);  // GB (decimal)
-      const numLayers = parseInt(inputs.numLayers.value);
-      const kvHeads = parseInt(inputs.kvHeads.value);
-      const headDim = parseInt(inputs.headDim.value);
-      const maxModelLen = parseInt(inputs.maxModelLen.value);
-      const maxNumSeqs = parseInt(inputs.maxNumSeqs.value);
-      const maxBatchedTokens = parseInt(inputs.maxBatchedTokens.value);
-      const kvCacheDtypeBytes = parseInt(inputs.kvCacheDtype.value);
+      const gpuVram = Math.max(0, toNumber(inputs.gpuVram.value));  // GB (decimal)
+      const numGpus = Math.max(1, toInt(inputs.numGpus.value, 1));
+      const gpuUtilization = Math.min(1, Math.max(0, toNumber(inputs.gpuUtilization.value)));
+      const modelWeights = Math.max(0, toNumber(inputs.modelWeights.value));  // GB (decimal)
+      const numLayers = Math.max(1, toInt(inputs.numLayers.value, 1));
+      const kvHeads = Math.max(1, toInt(inputs.kvHeads.value, 1));
+      const headDim = Math.max(1, toInt(inputs.headDim.value, 1));
+      const attnHeadsInput = Math.max(1, toInt(inputs.attnHeads.value, kvHeads));
+      const maxModelLen = Math.max(1, toInt(inputs.maxModelLen.value, 1));
+      const maxNumSeqs = Math.max(1, toInt(inputs.maxNumSeqs.value, 1));
+      const maxBatchedTokens = Math.max(1, toInt(inputs.maxBatchedTokens.value, 1));
+      const kvCacheDtypeBytes = Math.max(1, toInt(inputs.kvCacheDtype.value, 2));
+      const activationDtypeBytes = Math.max(1, toInt(inputs.activationDtype.value, 2));
       const cudaGraphsEnabled = inputs.cudaGraphs.value === '1';
-      const overhead = parseFloat(inputs.overhead.value);  // GB (decimal)
+      const overheadPadding = Math.max(0, toNumber(inputs.overheadPadding.value));  // GB (decimal)
 
       // Calculate per-GPU values (all in GB decimal)
       const availableVram = gpuVram * gpuUtilization;
       const weightsPerGpu = modelWeights / numGpus;
-      const cudaGraphsSize = cudaGraphsEnabled ? 2.5 : 0;
+      const attnHeads = Math.max(attnHeadsInput, kvHeads);
+      if (attnHeadsInput !== attnHeads) {
+        inputs.attnHeads.value = attnHeads;
+      }
+      const attnHeadsPerGpu = Math.ceil(attnHeads / numGpus);
+      const hiddenSizePerGpu = attnHeadsPerGpu * headDim;
+      const prefillTokens = maxBatchedTokens;
+      const decodeTokens = maxNumSeqs;
+      const activationTokens = prefillTokens + decodeTokens;
+      const activationBytes = activationTokens * hiddenSizePerGpu * activationDtypeBytes;
+      const overheadEstimate = (activationBytes * 2) / 1e9;
+      inputs.overheadEstimate.value = overheadEstimate.toFixed(2);
+      const totalOverhead = overheadEstimate + overheadPadding;
+      const cudaGraphsSize = cudaGraphsEnabled ? (activationBytes / 1e9) : 0;
+      const overheadNotes = document.getElementById('overhead-notes');
+      overheadNotes.textContent = `${formatNumber(activationTokens)} tokens × ${formatNumber(hiddenSizePerGpu)} hidden × ${activationDtypeBytes} bytes × 2 buffers`;
       
       // KV cache calculation
       // Per token per layer: 2 (K+V) * kvHeads * headDim * dtype_bytes
@@ -1510,7 +1586,7 @@
       const bytesPerTokenKB = bytesPerToken / 1024;
       
       // Available for KV cache
-      const fixedOverhead = weightsPerGpu + cudaGraphsSize + overhead;
+      const fixedOverhead = weightsPerGpu + cudaGraphsSize + totalOverhead;
       const kvAvailable = Math.max(0, availableVram - fixedOverhead);
       const kvAvailableBytes = kvAvailable * 1e9; // GB to bytes (decimal)
 
@@ -1526,12 +1602,12 @@
       const recommendedSeqs = Math.max(1, Math.floor(maxTokensInCache / targetAvgContext));
 
       // Estimate actual KV usage based on max_batched_tokens as proxy
-      const estimatedActiveTokens = Math.min(maxBatchedTokens * maxNumSeqs / 2, maxTokensInCache);
+      const estimatedActiveTokens = Math.min(prefillTokens + decodeTokens, maxTokensInCache);
       const estimatedKvUsage = (estimatedActiveTokens * bytesPerToken) / 1e9; // bytes to GB (decimal)
       
       // Total usage
-      const totalUsage = weightsPerGpu + estimatedKvUsage + cudaGraphsSize + overhead;
-      const usagePercent = (totalUsage / gpuVram) * 100;
+      const totalUsage = weightsPerGpu + estimatedKvUsage + cudaGraphsSize + totalOverhead;
+      const usagePercent = gpuVram > 0 ? (totalUsage / gpuVram) * 100 : 0;
       const freeSpace = Math.max(0, gpuVram - totalUsage);
 
       // Update breakdown table
@@ -1550,8 +1626,12 @@
           <td>${formatBytes(cudaGraphsSize)}</td>
         </tr>
         <tr>
-          <td>Overhead</td>
-          <td>${formatBytes(overhead)}</td>
+          <td>Overhead (estimate)</td>
+          <td>${formatBytes(overheadEstimate)}</td>
+        </tr>
+        <tr>
+          <td>Overhead (extra)</td>
+          <td>${formatBytes(overheadPadding)}</td>
         </tr>
         <tr class="total-row">
           <td>Total Used</td>
@@ -1563,17 +1643,17 @@
         </tr>
         <tr>
           <td>Free Headroom</td>
-          <td>${formatBytes(availableVram - totalUsage)}</td>
+          <td>${formatBytes(Math.max(0, availableVram - totalUsage))}</td>
         </tr>
       `;
 
       // Update memory bar
       const memoryBar = document.getElementById('memory-bar');
-      const weightsPercent = (weightsPerGpu / gpuVram) * 100;
-      const kvPercent = (estimatedKvUsage / gpuVram) * 100;
-      const cudaPercent = (cudaGraphsSize / gpuVram) * 100;
-      const overheadPercent = (overhead / gpuVram) * 100;
-      const freePercent = (freeSpace / gpuVram) * 100;
+      const weightsPercent = gpuVram > 0 ? (weightsPerGpu / gpuVram) * 100 : 0;
+      const kvPercent = gpuVram > 0 ? (estimatedKvUsage / gpuVram) * 100 : 0;
+      const cudaPercent = gpuVram > 0 ? (cudaGraphsSize / gpuVram) * 100 : 0;
+      const overheadPercent = gpuVram > 0 ? (totalOverhead / gpuVram) * 100 : 0;
+      const freePercent = gpuVram > 0 ? (freeSpace / gpuVram) * 100 : 0;
 
       memoryBar.innerHTML = `
         <div class="memory-segment weights" style="width: ${weightsPercent}%"></div>
